@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <stdbool.h>
 
+// Переименованы токены для лучшей читаемости
 typedef enum {
     // Основные токены
     TOKEN_DOLLAR,
@@ -41,6 +42,8 @@ typedef enum {
     TOKEN_REAL,
     TOKEN_CHAR,
     TOKEN_BOOL,
+    TOKEN_STRING,        // Добавлен строковый литерал
+    TOKEN_NONE,          // Добавлено значение NONE для bool
     
     // Препроцессорные директивы (переименованы)
     TOKEN_PREPROC_MACRO,
@@ -107,10 +110,9 @@ typedef enum {
     TOKEN_BREAK,        // Добавлен break
     TOKEN_CONTINUE,     // Добавлен continue
     TOKEN_QUIT,         // Добавлен quit
-    TOKEN_NEW,          // Добавлен new
     
     // Символы
-    TOKEN_QUESTION,     // Добавлен ?
+    TOKEN_QUESTION,
     
     // Специальные
     TOKEN_EOF,
@@ -152,6 +154,8 @@ const char *token_names[] = {
     [TOKEN_REAL] = "REAL",
     [TOKEN_CHAR] = "CHAR",
     [TOKEN_BOOL] = "BOOL",
+    [TOKEN_STRING] = "STRING",
+    [TOKEN_NONE] = "NONE",
     [TOKEN_PREPROC_MACRO] = "PREPROC_MACRO",
     [TOKEN_PLUS] = "PLUS",
     [TOKEN_MINUS] = "MINUS",
@@ -203,13 +207,12 @@ const char *token_names[] = {
     [TOKEN_BREAK] = "BREAK",
     [TOKEN_CONTINUE] = "CONTINUE",
     [TOKEN_QUIT] = "QUIT",
-    [TOKEN_NEW] = "NEW",
     [TOKEN_QUESTION] = "QUESTION",
     [TOKEN_EOF] = "EOF",
     [TOKEN_ERROR] = "ERROR"
 };
 
-// Структура токена (без изменений)
+// Структура токена
 typedef struct {
     TokenType type;
     char *value;
@@ -218,7 +221,7 @@ typedef struct {
     int length;
 } Token;
 
-// Структура лексера (без изменений)
+// Структура лексера
 typedef struct {
     const char *input;
     int length;
@@ -339,7 +342,7 @@ void skip_comments(Lexer *lexer) {
     }
 }
 
-// Разбор чисел (целых и с плавающей точкой)
+// Разбор чисел с поддержкой экспоненциальной записи
 void parse_number(Lexer *lexer) {
     int start = lexer->position;
     bool is_real = false;
@@ -356,27 +359,30 @@ void parse_number(Lexer *lexer) {
             is_real = true;
             lexer->position++;
             lexer->column++;
-        } else if (c == 'e') {
+        } 
+        // Обработка экспоненты
+        else if (c == 'e') {
             is_real = true;
             lexer->position++;
             lexer->column++;
             has_exponent = true;
-
-            // Обработка хнака экспоненты
-            if (lexer->position < lexer->length &&
-                (lexer->input[lexer->position] == '+' ||
-                lexer->input[lexer->position] == '=')) {
+            
+            // Обработка знака экспоненты
+            if (lexer->position < lexer->length && 
+                (lexer->input[lexer->position] == '+' || 
+                 lexer->input[lexer->position] == '-')) {
                 lexer->position++;
                 lexer->column++;
             }
-
+            
             // Проверка цифр после экспоненты
-            if (lexer->position >= lexer->length ||
+            if (lexer->position >= lexer->length || 
                 !isdigit(lexer->input[lexer->position])) {
                 add_error(lexer, "Exponent has no digits");
                 return;
             }
-        } else if (isdigit(c)) {
+        } 
+        else if (isdigit(c)) {
             lexer->position++;
             lexer->column++;
         } else {
@@ -389,8 +395,6 @@ void parse_number(Lexer *lexer) {
     add_token(lexer, type, lexer->input + start, length);
 }
 
-void parse_arguments(Lexer *lexer);
-
 // Разбор символьных литералов
 void parse_char(Lexer *lexer) {
     lexer->position++; // Пропускаем начальную '
@@ -398,11 +402,10 @@ void parse_char(Lexer *lexer) {
     
     int start = lexer->position;
     
-    // Обработка экранированных символов с проверкой границ
+    // Обработка экранированных символов
     if (lexer->position < lexer->length && lexer->input[lexer->position] == '\\') {
         lexer->position++;
         lexer->column++;
-        // Проверяем, что после \ есть символ
         if (lexer->position >= lexer->length) {
             add_error(lexer, "Unclosed character literal");
             return;
@@ -429,7 +432,43 @@ void parse_char(Lexer *lexer) {
     lexer->column++;
 }
 
-// Разбор булевых значений
+// Разбор строковых литералов
+void parse_string(Lexer *lexer) {
+    lexer->position++; // Пропускаем начальную "
+    lexer->column++;
+    
+    int start = lexer->position;
+    
+    while (lexer->position < lexer->length) {
+        if (lexer->input[lexer->position] == '\\') {
+            // Пропускаем экранированный символ
+            lexer->position++;
+            lexer->column++;
+            if (lexer->position < lexer->length) {
+                lexer->position++;
+                lexer->column++;
+            }
+        } else if (lexer->input[lexer->position] == '"') {
+            break;
+        } else {
+            lexer->position++;
+            lexer->column++;
+        }
+    }
+    
+    if (lexer->position >= lexer->length || lexer->input[lexer->position] != '"') {
+        add_error(lexer, "Unclosed string literal");
+        return;
+    }
+    
+    int length = lexer->position - start;
+    add_token(lexer, TOKEN_STRING, lexer->input + start, length);
+    
+    lexer->position++; // Пропускаем завершающую "
+    lexer->column++;
+}
+
+// Разбор булевых значений с поддержкой NONE
 void parse_bool(Lexer *lexer) {
     if (strncmp(lexer->input + lexer->position, "TRUE", 4) == 0) {
         add_token(lexer, TOKEN_BOOL, "TRUE", 4);
@@ -440,7 +479,7 @@ void parse_bool(Lexer *lexer) {
         lexer->position += 5;
         lexer->column += 5;
     } else if (strncmp(lexer->input + lexer->position, "NONE", 4) == 0) {
-        add_token(lexer, TOKEN_BOOL, "NONE", 4);
+        add_token(lexer, TOKEN_NONE, "NONE", 4);
         lexer->position += 4;
         lexer->column += 4;
     } else {
@@ -448,7 +487,18 @@ void parse_bool(Lexer *lexer) {
     }
 }
 
-// Разбор переменной
+// Проверка валидности модификатора
+bool is_valid_modifier(const char *modifier) {
+    const char *valid_modifiers[] = {"const", "unsig", "public", "private", "dynam"};
+    for (int i = 0; i < 5; i++) {
+        if (strcmp(modifier, valid_modifiers[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Разбор переменной с улучшенной обработкой модификаторов и массивов
 void parse_variable(Lexer *lexer) {
     int start = lexer->position;
     lexer->position++; // Пропускаем '$'
@@ -457,7 +507,98 @@ void parse_variable(Lexer *lexer) {
     // Добавляем токен DOLLAR
     add_token(lexer, TOKEN_DOLLAR, "$", 1);
     
-    // Обработка системы счисления (если есть)
+    skip_whitespace(lexer);
+    
+    // Обработка модификаторов
+    if (lexer->input[lexer->position] == '[') {
+        add_token(lexer, TOKEN_LBRACKET, "[", 1);
+        lexer->position++;
+        lexer->column++;
+        
+        while (lexer->position < lexer->length) {
+            skip_whitespace(lexer);
+            
+            int mod_start = lexer->position;
+            while (lexer->position < lexer->length && 
+                   isalpha(lexer->input[lexer->position])) {
+                lexer->position++;
+                lexer->column++;
+            }
+            
+            if (lexer->position > mod_start) {
+                int length = lexer->position - mod_start;
+                char *modifier = strndup(lexer->input + mod_start, length);
+                
+                if (is_valid_modifier(modifier)) {
+                    add_token(lexer, TOKEN_MODIFIER, modifier, length);
+                } else {
+                    add_error(lexer, "Invalid modifier: %s", modifier);
+                }
+                free(modifier);
+            }
+            
+            skip_whitespace(lexer);
+            
+            if (lexer->input[lexer->position] == ',') {
+                add_token(lexer, TOKEN_COMMA, ",", 1);
+                lexer->position++;
+                lexer->column++;
+                skip_whitespace(lexer);
+            } else if (lexer->input[lexer->position] == ']') {
+                break;
+            } else {
+                add_error(lexer, "Expected ',' or ']' in modifier list");
+                return;
+            }
+        }
+        
+        if (lexer->position >= lexer->length || lexer->input[lexer->position] != ']') {
+            add_error(lexer, "Expected ']' after modifiers");
+            return;
+        }
+        
+        add_token(lexer, TOKEN_RBRACKET, "]", 1);
+        lexer->position++;
+        lexer->column++;
+        
+        skip_whitespace(lexer);
+    }
+    
+    // Обработка одиночного модификатора
+    if (isalpha(lexer->input[lexer->position])) {
+        int mod_start = lexer->position;
+        while (lexer->position < lexer->length && 
+               isalpha(lexer->input[lexer->position])) {
+            lexer->position++;
+            lexer->column++;
+        }
+        
+        if (lexer->position > mod_start) {
+            int length = lexer->position - mod_start;
+            char *modifier = strndup(lexer->input + mod_start, length);
+            
+            if (is_valid_modifier(modifier)) {
+                add_token(lexer, TOKEN_MODIFIER, modifier, length);
+            } else {
+                add_error(lexer, "Invalid modifier: %s", modifier);
+            }
+            free(modifier);
+        }
+        
+        skip_whitespace(lexer);
+    }
+    
+    // Проверка двойного двоеточия после модификаторов
+    if (lexer->position < lexer->length - 1 && 
+        lexer->input[lexer->position] == ':' && 
+        lexer->input[lexer->position + 1] == ':') {
+        add_token(lexer, TOKEN_DOUBLE_COLON, "::", 2);
+        lexer->position += 2;
+        lexer->column += 2;
+        skip_whitespace(lexer);
+    }
+    
+    // Обработка системы счисления
     int token_start = lexer->position;
     while (lexer->position < lexer->length && 
            isdigit(lexer->input[lexer->position])) {
@@ -487,15 +628,13 @@ void parse_variable(Lexer *lexer) {
         return;
     }
     
-    // Обработка опционального размера в битах
+    // Обработка размера в битах
     if (lexer->position < lexer->length && lexer->input[lexer->position] == ':') {
-        // Добавляем токен COLON
         add_token(lexer, TOKEN_COLON, ":", 1);
         lexer->position++;
         lexer->column++;
         token_start = lexer->position;
         
-        // Обработка размера в битах
         while (lexer->position < lexer->length && 
                isdigit(lexer->input[lexer->position])) {
             lexer->position++;
@@ -511,7 +650,6 @@ void parse_variable(Lexer *lexer) {
         }
     }
     
-    // Пропуск пробелов перед именем
     skip_whitespace(lexer);
     
     // Обработка идентификатора
@@ -532,71 +670,67 @@ void parse_variable(Lexer *lexer) {
     }
     
     // Обработка массива
-    if (lexer->input[lexer->position] == '[') {
+    while (lexer->position < lexer->length && lexer->input[lexer->position] == '[') {
         add_token(lexer, TOKEN_LBRACKET, "[", 1);
         lexer->position++;
         lexer->column++;
+        skip_whitespace(lexer);
         
-        while (lexer->position < lexer->length) {
-            skip_whitespace(lexer);
-            
-            int start = lexer->position;
-            while (lexer->position < lexer->length && 
-                   isalpha(lexer->input[lexer->position])) {
+        // Обработка содержимого скобок
+        while (lexer->position < lexer->length && lexer->input[lexer->position] != ']') {
+            if (lexer->input[lexer->position] == '?') {
+                add_token(lexer, TOKEN_QUESTION, "?", 1);
+                lexer->position++;
+                lexer->column++;
+            } else if (lexer->position < lexer->length - 2 && 
+                     lexer->input[lexer->position] == '.' &&
+                     lexer->input[lexer->position + 1] == '.' &&
+                     lexer->input[lexer->position + 2] == '.') {
+                add_token(lexer, TOKEN_ELLIPSIS, "...", 3);
+                lexer->position += 3;
+                lexer->column += 3;
+            } else if (lexer->input[lexer->position] == ':') {
+                add_token(lexer, TOKEN_COLON, ":", 1);
+                lexer->position++;
+                lexer->column++;
+            } else if (isdigit(lexer->input[lexer->position]) || 
+                     lexer->input[lexer->position] == '-' ||
+                     lexer->input[lexer->position] == '+') {
+                parse_number(lexer);
+            } else if (isalpha(lexer->input[lexer->position])) {
+                int id_start = lexer->position;
+                while (lexer->position < lexer->length && 
+                       (isalnum(lexer->input[lexer->position]) || 
+                        lexer->input[lexer->position] == '_')) {
+                    lexer->position++;
+                    lexer->column++;
+                }
+                int id_length = lexer->position - id_start;
+                add_token(lexer, TOKEN_IDENTIFIER, lexer->input + id_start, id_length);
+            } else {
+                add_error(lexer, "Unexpected character in array dimension");
                 lexer->position++;
                 lexer->column++;
             }
             
-            if (lexer->position > start) {
-                int length = lexer->position - start;
-                add_token(lexer, TOKEN_MODIFIER, lexer->input + start, length);
-            }
-            
             skip_whitespace(lexer);
-            
-            if (lexer->input[lexer->position] == ',') {
-                add_token(lexer, TOKEN_COMMA, ",", 1);
-                lexer->position++;
-                lexer->column++;
-            }
-            else if (lexer->input[lexer->position] == ']') {
-                break;
-            }
-            else {
-                add_error(lexer, "Expected ',' or ']' in modifier list");
-                return;
-            }
         }
         
-        if (lexer->input[lexer->position] != ']') {
-            add_error(lexer, "Expected ']' after modifiers");
+        if (lexer->position >= lexer->length || lexer->input[lexer->position] != ']') {
+            add_error(lexer, "Expected ']' after array dimension");
             return;
         }
         
         add_token(lexer, TOKEN_RBRACKET, "]", 1);
         lexer->position++;
         lexer->column++;
-        
-        // Проверка двойного двоеточия
-        if (lexer->position >= lexer->length - 1 || 
-            lexer->input[lexer->position] != ':' || 
-            lexer->input[lexer->position + 1] != ':') {
-            add_error(lexer, "Expected '::' after modifiers");
-            return;
-        }
-        
-        add_token(lexer, TOKEN_DOUBLE_COLON, "::", 2);
-        lexer->position += 2;
-        lexer->column += 2;
         skip_whitespace(lexer);
     }
     
-    // Пропуск пробелов перед инициализацией
     skip_whitespace(lexer);
     
     // Обработка инициализации
     if (lexer->position < lexer->length && lexer->input[lexer->position] == '=') {
-        // Добавляем токен EQUAL
         add_token(lexer, TOKEN_EQUAL, "=", 1);
         lexer->position++;
         lexer->column++;
@@ -605,7 +739,6 @@ void parse_variable(Lexer *lexer) {
         
         // Инициализация массива
         if (lexer->position < lexer->length && lexer->input[lexer->position] == '{') {
-            // Добавляем токен LBRACE
             add_token(lexer, TOKEN_LBRACE, "{", 1);
             lexer->position++;
             lexer->column++;
@@ -619,18 +752,50 @@ void parse_variable(Lexer *lexer) {
                 // Разбор элемента инициализации
                 if (lexer->input[lexer->position] == '\'') {
                     parse_char(lexer);
-                } else if (isdigit(lexer->input[lexer->position]) || 
-                          lexer->input[lexer->position] == '-' ||
-                          lexer->input[lexer->position] == '+') {
+                } 
+                else if (lexer->input[lexer->position] == '"') {
+                    parse_string(lexer);
+                }
+                else if (isdigit(lexer->input[lexer->position]) || 
+                         lexer->input[lexer->position] == '-' ||
+                         lexer->input[lexer->position] == '+') {
                     parse_number(lexer);
-                } else if (isalpha(lexer->input[lexer->position])) {
+                } 
+                else if (isalpha(lexer->input[lexer->position])) {
                     if (strncmp(lexer->input + lexer->position, "TRUE", 4) == 0 ||
                         strncmp(lexer->input + lexer->position, "FALSE", 5) == 0 ||
                         strncmp(lexer->input + lexer->position, "NONE", 4) == 0) {
                         parse_bool(lexer);
                     } else {
-                        add_error(lexer, "Invalid initialization value");
-                        return;
+                        // Обработка вызова функции
+                        int func_start = lexer->position;
+                        while (lexer->position < lexer->length && 
+                               (isalnum(lexer->input[lexer->position]) || 
+                                lexer->input[lexer->position] == '_')) {
+                            lexer->position++;
+                            lexer->column++;
+                        }
+                        
+                        int func_length = lexer->position - func_start;
+                        char *func_name = strndup(lexer->input + func_start, func_length);
+                        
+                        skip_whitespace(lexer);
+                        if (lexer->input[lexer->position] == '(') {
+                            add_token(lexer, TOKEN_FUNCTION, func_name, func_length);
+                            // Пропускаем аргументы функции
+                            lexer->position++;
+                            lexer->column++;
+                            int depth = 1;
+                            while (lexer->position < lexer->length && depth > 0) {
+                                if (lexer->input[lexer->position] == '(') depth++;
+                                else if (lexer->input[lexer->position] == ')') depth--;
+                                lexer->position++;
+                                lexer->column++;
+                            }
+                        } else {
+                            add_token(lexer, TOKEN_IDENTIFIER, func_name, func_length);
+                        }
+                        free(func_name);
                     }
                 } else {
                     add_error(lexer, "Unexpected character in initialization");
@@ -655,7 +820,6 @@ void parse_variable(Lexer *lexer) {
                 return;
             }
             
-            // Добавляем токен RBRACE
             add_token(lexer, TOKEN_RBRACE, "}", 1);
             lexer->position++;
             lexer->column++;
@@ -664,131 +828,55 @@ void parse_variable(Lexer *lexer) {
         else {
             if (lexer->input[lexer->position] == '\'') {
                 parse_char(lexer);
-            } else if (isdigit(lexer->input[lexer->position]) || 
-                      lexer->input[lexer->position] == '-' ||
-                      lexer->input[lexer->position] == '+') {
+            } 
+            else if (lexer->input[lexer->position] == '"') {
+                parse_string(lexer);
+            }
+            else if (isdigit(lexer->input[lexer->position]) || 
+                     lexer->input[lexer->position] == '-' ||
+                     lexer->input[lexer->position] == '+') {
                 parse_number(lexer);
-            } else if (isalpha(lexer->input[lexer->position])) {
+            } 
+            else if (isalpha(lexer->input[lexer->position])) {
                 if (strncmp(lexer->input + lexer->position, "TRUE", 4) == 0 ||
                     strncmp(lexer->input + lexer->position, "FALSE", 5) == 0 ||
                     strncmp(lexer->input + lexer->position, "NONE", 4) == 0) {
                     parse_bool(lexer);
                 } else {
-                    add_error(lexer, "Invalid initialization value");
-                    return;
+                    // Обработка вызова функции
+                    int func_start = lexer->position;
+                    while (lexer->position < lexer->length && 
+                           (isalnum(lexer->input[lexer->position]) || 
+                            lexer->input[lexer->position] == '_')) {
+                        lexer->position++;
+                        lexer->column++;
+                    }
+                    
+                    int func_length = lexer->position - func_start;
+                    char *func_name = strndup(lexer->input + func_start, func_length);
+                    
+                    skip_whitespace(lexer);
+                    if (lexer->input[lexer->position] == '(') {
+                        add_token(lexer, TOKEN_FUNCTION, func_name, func_length);
+                        // Пропускаем аргументы функции
+                        lexer->position++;
+                        lexer->column++;
+                        int depth = 1;
+                        while (lexer->position < lexer->length && depth > 0) {
+                            if (lexer->input[lexer->position] == '(') depth++;
+                            else if (lexer->input[lexer->position] == ')') depth--;
+                            lexer->position++;
+                            lexer->column++;
+                        }
+                    } else {
+                        add_token(lexer, TOKEN_IDENTIFIER, func_name, func_length);
+                    }
+                    free(func_name);
                 }
             } else {
                 add_error(lexer, "Unexpected character in initialization");
                 return;
             }
-        }
-    }
-    
-    // Проверка точки с запятой
-    /*skip_whitespace(lexer);
-    if (lexer->position >= lexer->length || lexer->input[lexer->position] != ';') {
-        add_error(lexer, "Expected ';' after variable declaration");
-        return;
-    }
-    
-    add_token(lexer, TOKEN_SEMICOLON, ";", 1);
-    lexer->position++;
-    lexer->column++;*/
-}
-
-// Разбор управляющих конструкций
-void parse_control(Lexer *lexer, const char *keyword, TokenType type) {
-    int len = strlen(keyword);
-    add_token(lexer, type, keyword, len);
-    lexer->position += len;
-    lexer->column += len;
-    
-    // Пропуск пробелов после ключевого слова
-    skip_whitespace(lexer);
-    
-    // Проверка открывающей скобки
-    if (lexer->input[lexer->position] != '(') {
-        add_error(lexer, "Expected '(' after '%s'", keyword);
-        return;
-    }
-    
-    add_token(lexer, TOKEN_LPAREN, "(", 1);
-    lexer->position++;
-    lexer->column++;
-    
-    // Пропуск содержимого скобок (упрощенная реализация)
-    int depth = 1;
-    int start = lexer->position;
-    
-    while (lexer->position < lexer->length && depth > 0) {
-        char c = lexer->input[lexer->position];
-        lexer->position++;
-        lexer->column++;
-        
-        if (c == '(') depth++;
-        else if (c == ')') depth--;
-        else if (c == '\n') {
-            lexer->line++;
-            lexer->column = 1;
-        }
-    }
-    
-    if (depth > 0) {
-        add_error(lexer, "Unclosed parentheses after '%s'", keyword);
-        return;
-    }
-    
-    // Добавляем содержимое скобок как отдельный токен
-    int content_length = lexer->position - start - 1; // -1 для последней ')'
-    add_token(lexer, TOKEN_IDENTIFIER, lexer->input + start, content_length);
-}
-
-// Разбор функций
-void parse_function(Lexer *lexer, TokenType type) {
-    int start = lexer->position;
-    lexer->position++; // Пропускаем '_' или '~'
-    lexer->column++;
-    
-    while (lexer->position < lexer->length && 
-           (isalnum(lexer->input[lexer->position]) || 
-            lexer->input[lexer->position] == '_')) {
-        lexer->position++;
-        lexer->column++;
-    }
-
-    int length = lexer->position - start;
-    add_token(lexer, type, lexer->input + start, length);
-
-    skip_whitespace(lexer);
-    
-    // Обработка аргументов (если есть скобки)
-    if (lexer->position < lexer->length && lexer->input[lexer->position] == '(') {
-        parse_arguments(lexer);
-    }
-    
-    skip_whitespace(lexer);
-    
-    // Обработка возвращаемого типа
-    if (lexer->position < lexer->length && lexer->input[lexer->position] == ':') {
-        lexer->position++;
-        lexer->column++;
-        add_token(lexer, TOKEN_COLON, ":", 1);
-        
-        skip_whitespace(lexer);
-        
-        int start = lexer->position;
-        while (lexer->position < lexer->length && 
-               isalpha(lexer->input[lexer->position])) {
-            lexer->position++;
-            lexer->column++;
-        }
-        
-        if (lexer->position > start) {
-            int length = lexer->position - start;
-            add_token(lexer, TOKEN_TYPE, lexer->input + start, length);
-        }
-        else {
-            add_error(lexer, "Expected return type after ':'");
         }
     }
 }
@@ -801,25 +889,38 @@ void parse_arguments(Lexer *lexer) {
     
     while (lexer->position < lexer->length && 
            lexer->input[lexer->position] != ')') {
-        // Пропуск пробелов
         skip_whitespace(lexer);
         
-        // Обработка аргумента
-        int start = lexer->position;
-        while (lexer->position < lexer->length && 
-               lexer->input[lexer->position] != ',' && 
-               lexer->input[lexer->position] != ')' && 
-               !isspace(lexer->input[lexer->position])) {
-            lexer->position++;
-            lexer->column++;
+        if (lexer->input[lexer->position] == '\'') {
+            parse_char(lexer);
+        } else if (lexer->input[lexer->position] == '"') {
+            parse_string(lexer);
+        } else if (isdigit(lexer->input[lexer->position]) || 
+                 lexer->input[lexer->position] == '-' ||
+                 lexer->input[lexer->position] == '+') {
+            parse_number(lexer);
+        } else if (isalpha(lexer->input[lexer->position])) {
+            if (strncmp(lexer->input + lexer->position, "TRUE", 4) == 0 ||
+                strncmp(lexer->input + lexer->position, "FALSE", 5) == 0 ||
+                strncmp(lexer->input + lexer->position, "NONE", 4) == 0) {
+                parse_bool(lexer);
+            } else {
+                int start = lexer->position;
+                while (lexer->position < lexer->length && 
+                       (isalnum(lexer->input[lexer->position]) || 
+                        lexer->input[lexer->position] == '_')) {
+                    lexer->position++;
+                    lexer->column++;
+                }
+                int length = lexer->position - start;
+                add_token(lexer, TOKEN_IDENTIFIER, lexer->input + start, length);
+            }
+        } else if (lexer->input[lexer->position] == '$') {
+            parse_variable(lexer);
         }
         
-        if (lexer->position > start) {
-            int length = lexer->position - start;
-            add_token(lexer, TOKEN_IDENTIFIER, lexer->input + start, length);
-        }
+        skip_whitespace(lexer);
         
-        // Обработка запятой
         if (lexer->position < lexer->length && 
             lexer->input[lexer->position] == ',') {
             add_token(lexer, TOKEN_COMMA, ",", 1);
@@ -840,6 +941,7 @@ void parse_arguments(Lexer *lexer) {
     }
 }
 
+// Разбор препроцессорных директив
 void parse_macro(Lexer *lexer) {
     lexer->position++; // Пропускаем '#'
     lexer->column++;
@@ -875,7 +977,7 @@ void parse_macro(Lexer *lexer) {
         int length = lexer->position - start;
         add_token(lexer, TOKEN_PREPROC_INCLIB, lexer->input + start, length);
         
-        lexer->position++; // Пропускаем ')'
+        lexer->position++; // Пропускаем ')' 
         lexer->column++;
     }
     else if (strncmp(lexer->input + lexer->position, "incfile", 7) == 0) {
@@ -901,14 +1003,14 @@ void parse_macro(Lexer *lexer) {
         }
         
         if (lexer->position >= lexer->length) {
-            add_error(lexer, "Unclosed #infile");
+            add_error(lexer, "Unclosed #incfile");
             return;
         }
         
         int length = lexer->position - start;
         add_token(lexer, TOKEN_PREPROC_INCFILE, lexer->input + start, length);
         
-        lexer->position++; // Пропускаем ')'
+        lexer->position++; // Пропускаем ')' 
         lexer->column++;
     }
     else if (strncmp(lexer->input + lexer->position, "define", 6) == 0) {
@@ -976,6 +1078,7 @@ void tokenize(Lexer *lexer) {
         char next = (lexer->position < lexer->length - 1) ? lexer->input[lexer->position + 1] : '\0';
         char next_next = (lexer->position < lexer->length - 2) ? lexer->input[lexer->position + 2] : '\0';
 
+        // Обработка составных операторов
         if (c == '+' && next == '+') {
             add_token(lexer, TOKEN_PLUS_PLUS, "++", 2);
             lexer->position += 2;
@@ -1026,13 +1129,13 @@ void tokenize(Lexer *lexer) {
             lexer->position += 2;
             lexer->column += 2;
             continue;
-        } else if (c == '<' && next == '=' && next_next == '=') {
-            add_token(lexer, TOKEN_ROL, "<==", 3);
+        } else if (c == '<' && next == '<' && next_next == '<') {
+            add_token(lexer, TOKEN_SAL, "<<<", 3);
             lexer->position += 3;
             lexer->column += 3;
             continue;
-        } else if (c == '<' && next == '<' && next_next == '<') {
-            add_token(lexer, TOKEN_SAL, "<<<", 3);
+        } else if (c == '<' && next == '=' && next_next == '=') {
+            add_token(lexer, TOKEN_SAL, "<==", 3);
             lexer->position += 3;
             lexer->column += 3;
             continue;
@@ -1096,54 +1199,11 @@ void tokenize(Lexer *lexer) {
             lexer->position += 2;
             lexer->column += 2;
             continue;
-        }  
- 
+        }
+        
         switch (c) {
             case '$': 
-                add_token(lexer, TOKEN_DOLLAR, "$", 1);
-                lexer->position++;
-                lexer->column++;
-                skip_whitespace(lexer);
-                
-                if (lexer->position >= lexer->length) {
-                    add_error(lexer, "Unexpected end after '$'");
-                    break;
-                }
-                
-                char nc = lexer->input[lexer->position];
-                if (nc == '[') {
-                    // Объявление с модификаторами
-                    parse_variable_declaration(lexer);
-                } else if (isdigit(nc)) {
-                    // Объявление с системой счисления
-                    parse_variable_declaration(lexer);
-                } else if (isalpha(nc)) {
-                    // Проверка является ли слово типом или модификатором
-                    int start_pos = lexer->position;
-                    while (lexer->position < lexer->length && 
-                           isalpha(lexer->input[lexer->position])) {
-                        lexer->position++;
-                    }
-                    int len = lexer->position - start_pos;
-                    char *word = strndup(lexer->input + start_pos, len);
-                    bool is_type = is_data_type(word);
-                    bool is_modifier = is_valid_modifier(word);
-                    free(word);
-                    
-                    // Возвращаем позицию назад для корректного разбора
-                    lexer->position = start_pos;
-                    
-                    if (is_type || is_modifier) {
-                        parse_variable_declaration(lexer);
-                    } else {
-                        parse_variable_usage(lexer);
-                    }
-                } else if (nc == '_' || isalnum(nc)) {
-                    // Использование переменной
-                    parse_variable_usage(lexer);
-                } else {
-                    add_error(lexer, "Expected variable declaration or usage after '$'");
-                }
+                parse_variable(lexer);
                 break;
 
             case 'i':
@@ -1171,19 +1231,21 @@ void tokenize(Lexer *lexer) {
                 break;
                 
             case 'd':
-                if (strncmp(lexer->input + lexer->position, "def", 3) == 0) {
-                    add_token(lexer, TOKEN_DEFAULT, "def", 3);
-                    lexer->position += 3;
-                    lexer->column += 3;
-                } else if (strncmp(lexer->input + lexer->position, "do", 2) == 0) {
+                if (strncmp(lexer->input + lexer->position, "do", 2) == 0) {
                     add_token(lexer, TOKEN_DO, "do", 2);
-                    lexer->position += 3;
-                    lexer->column += 3;
-                } else {
+                    lexer->position += 2;
+                    lexer->column += 2;
+                } 
+                else if (strncmp(lexer->input + lexer->position, "default", 7) == 0) {
+                    add_token(lexer, TOKEN_DEFAULT, "default", 7);
+                    lexer->position += 7;
+                    lexer->column += 7;
+                } 
+                else {
                     goto identifier;
-                }
-                break;
-
+                } 
+               break;
+ 
             case 's':
                 if (strncmp(lexer->input + lexer->position, "switch", 6) == 0) {
                     add_token(lexer, TOKEN_SWITCH, "switch", 6);
@@ -1193,19 +1255,26 @@ void tokenize(Lexer *lexer) {
                     goto identifier;
                 }
                 break;
+                
             case 'c':
                 if (strncmp(lexer->input + lexer->position, "case", 4) == 0) {
                     add_token(lexer, TOKEN_CASE, "case", 4);
                     lexer->position += 4;
                     lexer->column += 4;
+                    skip_whitespace(lexer);
+                    if (lexer->input[lexer->position] == '(') {
+                        parse_arguments(lexer);
+                    }
                 } else if (strncmp(lexer->input + lexer->position, "continue", 8) == 0) {
                     add_token(lexer, TOKEN_CONTINUE, "continue", 8);
                     lexer->position += 8;
                     lexer->column += 8;
-                } else {
+                } 
+                else {
                     goto identifier;
                 }
                 break;
+                
             case 'b':
                 if (strncmp(lexer->input + lexer->position, "break", 5) == 0) {
                     add_token(lexer, TOKEN_BREAK, "break", 5);
@@ -1215,6 +1284,7 @@ void tokenize(Lexer *lexer) {
                     goto identifier;
                 }
                 break;
+                
             case 'q':
                 if (strncmp(lexer->input + lexer->position, "quit", 4) == 0) {
                     add_token(lexer, TOKEN_QUIT, "quit", 4);
@@ -1223,7 +1293,7 @@ void tokenize(Lexer *lexer) {
                 } else {
                     goto identifier;
                 }
-                break;
+                break; 
 
             case '+': 
                 add_token(lexer, TOKEN_PLUS, "+", 1);
@@ -1292,27 +1362,39 @@ void tokenize(Lexer *lexer) {
                 break;
                 
             case '_':
-                parse_function(lexer, TOKEN_FUNCTION);
-                skip_whitespace(lexer);
-                if (lexer->input[lexer->position] == '(') {
-                    parse_arguments(lexer);
+                // Обработка функции
+                lexer->position++;
+                lexer->column++;
+                int start_pos = lexer->position;
+                while (lexer->position < lexer->length && 
+                       (isalnum(lexer->input[lexer->position]) || 
+                        lexer->input[lexer->position] == '_')) {
+                    lexer->position++;
+                    lexer->column++;
+                }
+                int len = lexer->position - start_pos;
+                if (len > 0) {
+                    add_token(lexer, TOKEN_FUNCTION, lexer->input + start_pos, len);
+                } else {
+                    add_error(lexer, "Expected function name after '_'");
                 }
                 break;
                 
-             case '~':
-                if (lexer->position < lexer->length - 1) {
-                    char next_char = lexer->input[lexer->position + 1];
-                    if (isalpha(next_char) || next_char == '_') {
-                        parse_function(lexer, TOKEN_START_FUNCTION);
-                    } else {
-                        add_token(lexer, TOKEN_TILDE, "~", 1);
-                        lexer->position++;
-                        lexer->column++;
-                    }
-                } else {
-                    add_token(lexer, TOKEN_TILDE, "~", 1);
+            case '~':
+                lexer->position++;
+                lexer->column++;
+                start_pos = lexer->position;
+                while (lexer->position < lexer->length && 
+                       (isalnum(lexer->input[lexer->position]) || 
+                        lexer->input[lexer->position] == '_')) {
                     lexer->position++;
                     lexer->column++;
+                }
+                len = lexer->position - start_pos;
+                if (len > 0) {
+                    add_token(lexer, TOKEN_START_FUNCTION, lexer->input + start_pos, len);
+                } else {
+                    add_token(lexer, TOKEN_TILDE, "~", 1);
                 }
                 break;
                 
@@ -1339,7 +1421,6 @@ void tokenize(Lexer *lexer) {
                     lexer->column += 3;
                 }
                 else {
-                    // Обработка одиночной точки
                     add_error(lexer, "Unexpected dot");
                     lexer->position++;
                     lexer->column++;
@@ -1348,15 +1429,9 @@ void tokenize(Lexer *lexer) {
 
             case 'r':
                 if (strncmp(lexer->input + lexer->position, "return", 6) == 0) {
-                    int len = strlen("return");
-                    add_token(lexer, TOKEN_RETURN, "return", len);
-                    lexer->position += len;
-                    lexer->column += len;
-                    
-                    skip_whitespace(lexer);
-                    if (lexer->input[lexer->position] == '(') {
-                        parse_arguments(lexer);
-                    }
+                    add_token(lexer, TOKEN_RETURN, "return", 6);
+                    lexer->position += 6;
+                    lexer->column += 6;
                 } else {
                     goto identifier;
                 }
@@ -1424,12 +1499,10 @@ void tokenize(Lexer *lexer) {
                 parse_char(lexer);
                 break;
                 
-            /*case '0' ... '9':
-            case '+':
-            case '-':
-                parse_number(lexer);
-                break;*/
-
+            case '"':
+                parse_string(lexer);
+                break;
+                
             case 'T':
             case 'F':
             case 'N':
@@ -1459,13 +1532,14 @@ identifier:
                     lexer->position++;
                     lexer->column++;
                 }
+                break;
         }
     }
     
     add_token(lexer, TOKEN_EOF, "EOF", 3);
 }
 
-
+// Главная функция
 int main() {
     FILE *file = fopen("file.txt", "r");
     if (file == NULL) {
