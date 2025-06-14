@@ -498,14 +498,45 @@ bool is_valid_modifier(const char *modifier) {
     return false;
 }
 
-// Разбор переменной с улучшенной обработкой модификаторов и массивов
-void parse_variable(Lexer *lexer) {
-    int start = lexer->position;
-    lexer->position++; // Пропускаем '$'
+// Проверка валидности типа
+bool is_valid_type(const char *type) {
+    const char *valid_types[] = {"int", "real", "char", "bool"};
+    for (int i = 0; i < 4; i++) {
+        if (strcmp(type, valid_types[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Разбор использования переменной (вызова)
+static void parse_variable_access(Lexer *lexer) {
+    add_token(lexer, TOKEN_DOLLAR, "$", 1);
+    lexer->position++;
     lexer->column++;
     
-    // Добавляем токен DOLLAR
+    if (lexer->position < lexer->length && 
+        (isalpha(lexer->input[lexer->position]) || 
+         lexer->input[lexer->position] == '_')) {
+        int start = lexer->position;
+        while (lexer->position < lexer->length && 
+               (isalnum(lexer->input[lexer->position]) || 
+                lexer->input[lexer->position] == '_')) {
+            lexer->position++;
+            lexer->column++;
+        }
+        int length = lexer->position - start;
+        add_token(lexer, TOKEN_IDENTIFIER, lexer->input + start, length);
+    } else {
+        add_error(lexer, "Expected identifier after '$' in variable access");
+    }
+}
+
+// Разбор объявления переменной
+static void parse_variable_declaration(Lexer *lexer) {
     add_token(lexer, TOKEN_DOLLAR, "$", 1);
+    lexer->position++;
+    lexer->column++;
     
     skip_whitespace(lexer);
     
@@ -622,7 +653,13 @@ void parse_variable(Lexer *lexer) {
     
     if (lexer->position > token_start) {
         int length = lexer->position - token_start;
-        add_token(lexer, TOKEN_TYPE, lexer->input + token_start, length);
+        char *type_str = strndup(lexer->input + token_start, length);
+        if (is_valid_type(type_str)) {
+            add_token(lexer, TOKEN_TYPE, type_str, length);
+        } else {
+            add_error(lexer, "Invalid type: %s", type_str);
+        }
+        free(type_str);
     } else {
         add_error(lexer, "Expected type after '$'");
         return;
@@ -916,7 +953,56 @@ void parse_arguments(Lexer *lexer) {
                 add_token(lexer, TOKEN_IDENTIFIER, lexer->input + start, length);
             }
         } else if (lexer->input[lexer->position] == '$') {
-            parse_variable(lexer);
+            // Для вложенных переменных внутри аргументов
+            int save_pos = lexer->position;
+            int save_line = lexer->line;
+            int save_col = lexer->column;
+
+            int temp_pos = save_pos + 1;
+            int temp_col = save_col + 1;
+            int temp_line = save_line;
+
+            while (temp_pos < lexer->length && 
+                   (lexer->input[temp_pos] == ' ' || lexer->input[temp_pos] == '\t')) {
+                temp_pos++;
+                temp_col++;
+            }
+
+            if (temp_pos >= lexer->length) {
+                parse_variable_access(lexer);
+                break;
+            }
+
+            char c = lexer->input[temp_pos];
+            bool is_declaration = false;
+
+            if (c == '[') {
+                is_declaration = true;
+            } else if (isdigit(c)) {
+                is_declaration = true;
+            } else if (isalpha(c)) {
+                int start_word = temp_pos;
+                while (temp_pos < lexer->length && 
+                       (isalnum(lexer->input[temp_pos]) || lexer->input[temp_pos] == '_')) {
+                    temp_pos++;
+                    temp_col++;
+                }
+                int len_word = temp_pos - start_word;
+                char *word = strndup(lexer->input + start_word, len_word);
+
+                if (is_valid_modifier(word)) {
+                    is_declaration = true;
+                } else if (is_valid_type(word)) {
+                    is_declaration = true;
+                }
+                free(word);
+            }
+
+            if (is_declaration) {
+                parse_variable_declaration(lexer);
+            } else {
+                parse_variable_access(lexer);
+            }
         }
         
         skip_whitespace(lexer);
@@ -1202,10 +1288,63 @@ void tokenize(Lexer *lexer) {
         }
         
         switch (c) {
-            case '$': 
-                parse_variable(lexer);
+            case '$': {
+                int save_pos = lexer->position;
+                int save_line = lexer->line;
+                int save_col = lexer->column;
+                
+                int temp_pos = save_pos + 1;
+                int temp_col = save_col + 1;
+                int temp_line = save_line;
+                
+                // Пропуск пробелов после '$'
+                while (temp_pos < lexer->length && 
+                       (lexer->input[temp_pos] == ' ' || lexer->input[temp_pos] == '\t')) {
+                    temp_pos++;
+                    temp_col++;
+                }
+                
+                if (temp_pos >= lexer->length) {
+                    // Только '$' в конце файла
+                    add_token(lexer, TOKEN_DOLLAR, "$", 1);
+                    lexer->position++;
+                    lexer->column++;
+                    break;
+                }
+                
+                char first_char = lexer->input[temp_pos];
+                bool is_declaration = false;
+                
+                if (first_char == '[') {
+                    is_declaration = true;
+                } else if (isdigit(first_char)) {
+                    is_declaration = true;
+                } else if (isalpha(first_char)) {
+                    int word_start = temp_pos;
+                    while (temp_pos < lexer->length && 
+                           (isalnum(lexer->input[temp_pos]) || lexer->input[temp_pos] == '_')) {
+                        temp_pos++;
+                        temp_col++;
+                    }
+                    int word_len = temp_pos - word_start;
+                    char *word = strndup(lexer->input + word_start, word_len);
+                    
+                    if (is_valid_modifier(word)) {
+                        is_declaration = true;
+                    } else if (is_valid_type(word)) {
+                        is_declaration = true;
+                    }
+                    free(word);
+                }
+                
+                if (is_declaration) {
+                    parse_variable_declaration(lexer);
+                } else {
+                    parse_variable_access(lexer);
+                }
                 break;
-
+            }
+                
             case 'i':
                 if (strncmp(lexer->input + lexer->position, "if", 2) == 0) {
                     add_token(lexer, TOKEN_IF, "if", 2);
