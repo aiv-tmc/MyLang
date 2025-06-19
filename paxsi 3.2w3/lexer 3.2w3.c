@@ -33,6 +33,7 @@ typedef enum {
     TOKEN_PREPROC_INCLIB,
     TOKEN_PREPROC_INCFILE,
     TOKEN_PREPROC_DEFINE,
+    TOKEN_PREPROC_ASSIGN,
     TOKEN_PREPROC_UNDEF,
     TOKEN_PREPROC_IFDEF,
     TOKEN_PREPROC_IFNDEF,
@@ -87,7 +88,6 @@ typedef enum {
     TOKEN_COMMA,
     TOKEN_SEMICOLON,
     TOKEN_QUESTION,
-    TOKEN_ELLIPSIS,
     TOKEN_UNDERSCORE,
     TOKEN_DOUBLE_UNDERSCORE,
     TOKEN_LCURLY,
@@ -133,6 +133,7 @@ const char* token_names[] = {
     [TOKEN_PREPROC_INCLIB]      =   "PREPROC_INCLIB",
     [TOKEN_PREPROC_INCFILE]     =   "PREPROC_INCFILE",
     [TOKEN_PREPROC_DEFINE]      =   "PREPROC_DEFINE",
+    [TOKEN_PREPROC_ASSIGN]      =   "PREPROC_ASSIGN",
     [TOKEN_PREPROC_UNDEF]       =   "PREPROC_UNDEF",
     [TOKEN_PREPROC_IFDEF]       =   "PREPROC_IFDEF",
     [TOKEN_PREPROC_IFNDEF]      =   "PREPROC_IFNDEF",
@@ -147,7 +148,6 @@ const char* token_names[] = {
     [TOKEN_DOUBLE_COLON]        =   "DOUBLE_COLON",
     [TOKEN_UNDERSCORE]          =   "UNDERSCORE",
     [TOKEN_DOUBLE_UNDERSCORE]   =   "DOUBLE_UNDERSCORE",
-    [TOKEN_ELLIPSIS]            =   "ELLIPSIS",
     [TOKEN_MODIFIER]            =   "MODIFIER",
     [TOKEN_ID]                  =   "ID",
     [TOKEN_SEMICOLON]           =   "SEMICOLON",
@@ -656,340 +656,6 @@ static void parse_return_type(Lexer* lexer) {
     }
 }
 
-static void parse_variable_declaration(Lexer* lexer) {
-    add_token(lexer, TOKEN_DOLLAR, "$", 1);
-    lexer->position++;
-    lexer->column++;
-
-    skip_whitespace(lexer);
-
-    if (lexer->input[lexer->position] == '[') {
-        add_token(lexer, TOKEN_LBRACKET, "[", 1);
-        lexer->position++;
-        lexer->column++;
-
-        while (lexer->position < lexer->length) {
-            skip_whitespace(lexer);
-
-            int mod_start = lexer->position;
-            while (lexer->position < lexer->length &&
-                isalpha(lexer->input[lexer->position])) {
-                lexer->position++;
-                lexer->column++;
-            }
-
-            if (lexer->position > mod_start) {
-                int length = lexer->position - mod_start;
-                char* modifier = strndup(lexer->input + mod_start, length);
-
-                if (is_valid_modifier(modifier)) {
-                    add_token(lexer, TOKEN_MODIFIER, modifier, length);
-                }
-                else {
-                    add_error(lexer, "Invalid modifier: %s", modifier);
-                }
-                free(modifier);
-            }
-
-            skip_whitespace(lexer);
-
-            if (lexer->input[lexer->position] == ',') {
-                add_token(lexer, TOKEN_COMMA, ",", 1);
-                lexer->position++;
-                lexer->column++;
-                skip_whitespace(lexer);
-            }
-            else if (lexer->input[lexer->position] == ']') {
-                break;
-            }
-            else {
-                add_error(lexer, "Expected ',' or ']' in modifier list");
-                return;
-            }
-        }
-
-        if (lexer->position >= lexer->length || lexer->input[lexer->position] != ']') {
-            add_error(lexer, "Expected ']' after modifiers");
-            return;
-        }
-
-        add_token(lexer, TOKEN_RBRACKET, "]", 1);
-        lexer->position++;
-        lexer->column++;
-        skip_whitespace(lexer);
-    }
-
-    int token_start = lexer->position;
-    while (lexer->position < lexer->length &&
-        isalpha(lexer->input[lexer->position])) {
-        lexer->position++;
-        lexer->column++;
-    }
-    if (lexer->position > token_start) {
-        int length = lexer->position - token_start;
-        char* type_str = strndup(lexer->input + token_start, length);
-        if (is_valid_type(type_str)) {
-            add_token(lexer, TOKEN_TYPE, type_str, length);
-        }
-        else {
-            add_error(lexer, "Invalid type: %s", type_str);
-        }
-        free(type_str);
-    }
-    else {
-        add_error(lexer, "Expected type after '$'");
-        return;
-    }
-
-    if (lexer->position < lexer->length && lexer->input[lexer->position] == ':') {
-        add_token(lexer, TOKEN_COLON, ":", 1);
-        lexer->position++;
-        lexer->column++;
-        token_start = lexer->position;
-
-        while (lexer->position < lexer->length &&
-            isdigit(lexer->input[lexer->position])) {
-            lexer->position++;
-            lexer->column++;
-        }
-
-        if (lexer->position > token_start) {
-            int length = lexer->position - token_start;
-            add_token(lexer, TOKEN_VAR_SIZE, lexer->input + token_start, length);
-        }
-        else {
-            add_error(lexer, "Expected bit size after ':'");
-            return;
-        }
-    }
-
-    skip_whitespace(lexer);
-
-    if (lexer->position < lexer->length) {
-        if (lexer->input[lexer->position] == '@') {
-            add_token(lexer, TOKEN_AT, "@", 1);
-            lexer->position++;
-            lexer->column++;
-            skip_whitespace(lexer);
-        }
-        else if (lexer->input[lexer->position] == '&') {
-            add_token(lexer, TOKEN_AMPERSAND, "&", 1);
-            lexer->position++;
-            lexer->column++;
-            skip_whitespace(lexer);
-        }
-        else if (lexer->input[lexer->position] == '*') {
-            add_token(lexer, TOKEN_STAR, "*", 1);
-            lexer->position++;
-            lexer->column++;
-            skip_whitespace(lexer);
-        }
-    }
-
-    token_start = lexer->position;
-    while (lexer->position < lexer->length &&
-        (isalnum(lexer->input[lexer->position]) ||
-            lexer->input[lexer->position] == '_')) {
-        lexer->position++;
-        lexer->column++;
-    }
-
-    if (lexer->position > token_start) {
-        int length = lexer->position - token_start;
-        add_token(lexer, TOKEN_ID, lexer->input + token_start, length);
-    }
-    else {
-        add_error(lexer, "Expected identifier after type");
-        return;
-    }
-
-    while (lexer->position < lexer->length && lexer->input[lexer->position] == '[') {
-        add_token(lexer, TOKEN_LBRACKET, "[", 1);
-        lexer->position++;
-        lexer->column++;
-        skip_whitespace(lexer);
-
-        while (lexer->position < lexer->length && lexer->input[lexer->position] != ']') {
-            if (lexer->input[lexer->position] == '?') {
-                add_token(lexer, TOKEN_QUESTION, "?", 1);
-                lexer->position++;
-                lexer->column++;
-            }
-            else if (lexer->position < lexer->length - 2 &&
-                lexer->input[lexer->position] == '.' &&
-                lexer->input[lexer->position + 1] == '.' &&
-                lexer->input[lexer->position + 2] == '.') {
-                add_token(lexer, TOKEN_ELLIPSIS, "...", 3);
-                lexer->position += 3;
-                lexer->column += 3;
-            }
-            else if (lexer->input[lexer->position] == ':') {
-                add_token(lexer, TOKEN_COLON, ":", 1);
-                lexer->position++;
-                lexer->column++;
-            }
-            else if (isdigit(lexer->input[lexer->position]) ||
-                lexer->input[lexer->position] == '-' ||
-                lexer->input[lexer->position] == '+') {
-                parse_number(lexer);
-            }
-            else if (isalpha(lexer->input[lexer->position]) || 
-                     lexer->input[lexer->position] == '_') {
-                int id_start = lexer->position;
-                while (lexer->position < lexer->length &&
-                    (isalnum(lexer->input[lexer->position]) ||
-                        lexer->input[lexer->position] == '_')) {
-                    lexer->position++;
-                    lexer->column++;
-                }
-                int id_length = lexer->position - id_start;
-                add_token(lexer, TOKEN_ID, lexer->input + id_start, id_length);
-            }
-            else if (lexer->input[lexer->position] == '$') {
-                parse_variable_access(lexer);
-            }
-            else {
-                add_error(lexer, "Unexpected character in array dimension");
-                lexer->position++;
-                lexer->column++;
-            }
-
-            skip_whitespace(lexer);
-        }
-
-        if (lexer->position >= lexer->length || lexer->input[lexer->position] != ']') {
-            add_error(lexer, "Expected ']' after array dimension");
-            return;
-        }
-
-        add_token(lexer, TOKEN_RBRACKET, "]", 1);
-        lexer->position++;
-        lexer->column++;
-        skip_whitespace(lexer);
-    }
-
-    skip_whitespace(lexer);
-
-    if (lexer->position < lexer->length && lexer->input[lexer->position] == '=') {
-        add_token(lexer, TOKEN_EQUAL, "=", 1);
-        lexer->position++;
-        lexer->column++;
-
-        skip_whitespace(lexer);
-
-        if (lexer->position < lexer->length && lexer->input[lexer->position] == '{') {
-            add_token(lexer, TOKEN_LBRACE, "{", 1);
-            lexer->position++;
-            lexer->column++;
-
-            while (lexer->position < lexer->length) {
-                skip_whitespace(lexer);
-                skip_comments(lexer);
-
-                if (lexer->input[lexer->position] == '}') break;
-
-                if (lexer->input[lexer->position] == '\'') {
-                    parse_char(lexer);
-                }
-                else if (lexer->input[lexer->position] == '"') {
-                    parse_string(lexer);
-                }
-                else if (lexer->input[lexer->position] == '$') {
-                    parse_variable_access(lexer);
-                }
-                else if (isdigit(lexer->input[lexer->position]) ||
-                    lexer->input[lexer->position] == '-' ||
-                    lexer->input[lexer->position] == '+') {
-                    parse_number(lexer);
-                }
-                else if (isalpha(lexer->input[lexer->position]) || 
-                         lexer->input[lexer->position] == '_') {
-                    if (strncmp(lexer->input + lexer->position, "NONE", 4) == 0) {
-                        add_token(lexer, TOKEN_NONE, "NONE", 4);
-                        lexer->position += 4;
-                        lexer->column += 4;
-                    }
-                    else {
-                        int id_start = lexer->position;
-                        while (lexer->position < lexer->length &&
-                            (isalnum(lexer->input[lexer->position]) ||
-                                lexer->input[lexer->position] == '_')) {
-                            lexer->position++;
-                            lexer->column++;
-                        }
-                        int length = lexer->position - id_start;
-                        add_token(lexer, TOKEN_ID, lexer->input + id_start, length);
-                    }
-                }
-                else {
-                    add_error(lexer, "Unexpected character in initialization");
-                    return;
-                }
-
-                skip_whitespace(lexer);
-
-                if (lexer->input[lexer->position] == ',') {
-                    add_token(lexer, TOKEN_COMMA, ",", 1);
-                    lexer->position++;
-                    lexer->column++;
-                }
-                else if (lexer->input[lexer->position] != '}') {
-                    add_error(lexer, "Expected ',' or '}' after array element");
-                    return;
-                }
-            }
-
-            if (lexer->position >= lexer->length || lexer->input[lexer->position] != '}') {
-                add_error(lexer, "Expected '}' after array initialization");
-                return;
-            }
-
-            add_token(lexer, TOKEN_RBRACE, "}", 1);
-            lexer->position++;
-            lexer->column++;
-        }
-        else {
-            if (lexer->input[lexer->position] == '\'') {
-                parse_char(lexer);
-            }
-            else if (lexer->input[lexer->position] == '"') {
-                parse_string(lexer);
-            }
-            else if (lexer->input[lexer->position] == '$') {
-                parse_variable_access(lexer);
-            }
-            else if (isdigit(lexer->input[lexer->position]) ||
-                lexer->input[lexer->position] == '-' ||
-                lexer->input[lexer->position] == '+') {
-                parse_number(lexer);
-            }
-            else if (isalpha(lexer->input[lexer->position]) || 
-                     lexer->input[lexer->position] == '_') {
-                if (strncmp(lexer->input + lexer->position, "NONE", 4) == 0) {
-                    add_token(lexer, TOKEN_NONE, "NONE", 4);
-                    lexer->position += 4;
-                    lexer->column += 4;
-                }
-                else {
-                    int id_start = lexer->position;
-                    while (lexer->position < lexer->length &&
-                        (isalnum(lexer->input[lexer->position]) ||
-                            lexer->input[lexer->position] == '_')) {
-                        lexer->position++;
-                        lexer->column++;
-                    }
-                    int length = lexer->position - id_start;
-                    add_token(lexer, TOKEN_ID, lexer->input + id_start, length);
-                }
-            }
-            else {
-                add_error(lexer, "Unexpected character in initialization");
-                return;
-            }
-        }
-    }
-}
-
 void parse_macro(Lexer* lexer) {
     lexer->position++;
     lexer->column++;
@@ -1008,6 +674,11 @@ void parse_macro(Lexer* lexer) {
         lexer->position += 6;
         lexer->column += 6;
         add_token(lexer, TOKEN_PREPROC_DEFINE, "define", 6);
+    }
+    else if (strncmp(lexer->input + lexer->position, "assign", 6) == 0) {
+        lexer->position += 6;
+        lexer->column += 6;
+        add_token(lexer, TOKEN_PREPROC_ASSIGN, "assign", 6);
     }
     else if (strncmp(lexer->input + lexer->position, "undef", 5) == 0) {
         lexer->position += 5;
@@ -1155,7 +826,7 @@ void tokenize(Lexer* lexer) {
         else if (character == '<' && next == '<') {
             add_token(lexer, TOKEN_SHL, "<<", 2);
             lexer->position += 2;
-            lexer->column += 2;
+            lex极column += 2;
             continue;
         }
         else if (character == '<' && next == '=') {
@@ -1165,7 +836,7 @@ void tokenize(Lexer* lexer) {
             continue;
         }
         else if (character == '&' && next == '&') {
-            add_token(lexer, TOKEN_DOUBLE_AND, "&&", 2);
+            add_token(lexer, TOKEN_DOUBLE_AND, "&&", 极);
             lexer->position += 2;
             lexer->column += 2;
             continue;
@@ -1221,54 +892,118 @@ void tokenize(Lexer* lexer) {
 
         switch (character) {
         case '$': {
-            int save_pos = lexer->position;
-            int save_line = lexer->line;
-            int save_col = lexer->column;
-
-            int temp_pos = save_pos + 1;
-            int temp_col = save_col + 1;
-            int temp_line = save_line;
-
-            while (temp_pos < lexer->length &&
-                (lexer->input[temp_pos] == ' ' || lexer->input[temp_pos] == '\t')) {
-                temp_pos++;
-                temp_col++;
-            }
-
-            if (temp_pos >= lexer->length) {
-                add_token(lexer, TOKEN_DOLLAR, "$", 1);
+            // Добавляем токен '$'
+            add_token(lexer, TOKEN_DOLLAR, "$", 1);
+            lexer->position++;
+            lexer->column++;
+            
+            skip_whitespace(lexer);
+            
+            // Считываем имя переменной
+            int name_start = lexer->position;
+            while (lexer->position < lexer->length && 
+                  (isalnum(lexer->input[lexer->position]) || 
+                   lexer->input[lexer->position] == '_')) {
                 lexer->position++;
                 lexer->column++;
+            }
+            
+            if (name_start == lexer->position) {
+                add_error(lexer, "Expected variable name after '$'");
                 break;
             }
-
-            char first_char = lexer->input[temp_pos];
-            bool is_declaration = false;
-
-            if (first_char == '[') {
-                is_declaration = true;
-            }
-            else if (isalpha(first_char) || first_char == '_') {
-                int word_start = temp_pos;
-                while (temp_pos < lexer->length &&
-                    (isalnum(lexer->input[temp_pos]) || lexer->input[temp_pos] == '_')) {
-                    temp_pos++;
-                    temp_col++;
+            
+            int name_length = lexer->position - name_start;
+            char* var_name = strndup(lexer->input + name_start, name_length);
+            add_token(lexer, TOKEN_ID, var_name, name_length);
+            free(var_name);
+            
+            skip_whitespace(lexer);
+            
+            // Проверяем наличие двоеточия (признак объявления)
+            if (lexer->position < lexer->length && lexer->input[lexer->position] == ':') {
+                // Добавляем двоеточие
+                add_token(lexer, TOKEN_COLON, ":", 1);
+                lexer->position++;
+                lexer->column++;
+                skip_whitespace(lexer);
+                
+                // Считываем тип
+                int type_start = lexer->position;
+                while (lexer->position < lexer->length && 
+                      isalpha(lexer->input[lexer->position])) {
+                    lexer->position++;
+                    lexer->column++;
                 }
-                int word_len = temp_pos - word_start;
-                char* word = strndup(lexer->input + word_start, word_len);
-
-                if (is_valid_modifier(word) || is_valid_type(word)) {
-                    is_declaration = true;
+                
+                if (type_start == lexer->position) {
+                    add_error(lexer, "Expected type after ':'");
+                    break;
                 }
-                free(word);
-            }
-
-            if (is_declaration) {
-                parse_variable_declaration(lexer);
-            }
-            else {
-                parse_variable_access(lexer);
+                
+                int type_length = lexer->position - type_start;
+                char* type_str = strndup(lexer->input + type_start, type_length);
+                
+                if (is_valid_type(type_str)) {
+                    add_token(lexer, TOKEN_TYPE, type_str, type_length);
+                } else {
+                    add_error(lexer, "Invalid type: %s", type_str);
+                }
+                free(type_str);
+                
+                skip_whitespace(lexer);
+                
+                // Обработка модификаторов
+                if (lexer->position < lexer->length && lexer->input[lexer->position] == '[') {
+                    add_token(lexer, TOKEN_LBRACKET, "[", 1);
+                    lexer->position++;
+                    lexer->column++;
+                    
+                    while (1) {
+                        skip_whitespace(lexer);
+                        
+                        int mod_start = lexer->position;
+                        while (lexer->position < lexer->length && 
+                              isalpha(lexer->input[lexer->position])) {
+                            lexer->position++;
+                            lexer->column++;
+                        }
+                        
+                        if (mod_start == lexer->position) {
+                            add_error(lexer, "Expected modifier inside brackets");
+                            break;
+                        }
+                        
+                        int mod_length = lexer->position - mod_start;
+                        char* modifier = strndup(lexer->input + mod_start, mod_length);
+                        
+                        if (is_valid_modifier(modifier)) {
+                            add_token(lexer, TOKEN_MODIFIER, modifier, mod_length);
+                        } else {
+                            add_error(lexer, "Invalid modifier: %s", modifier);
+                        }
+                        free(modifier);
+                        
+                        skip_whitespace(lexer);
+                        
+                        if (lexer->position < lexer->length && lexer->input[lexer->position] == ',') {
+                            add_token(lexer, TOKEN_COMMA, ",", 1);
+                            lexer->position++;
+                            lexer->column++;
+                        } else if (lexer->position < lexer->length && lexer->input[lexer->position] == ']') {
+                            break;
+                        } else {
+                            add_error(lexer, "Expected ',' or ']' after modifier");
+                            break;
+                        }
+                    }
+                    
+                    if (lexer->position < lexer->length && lexer->input[lexer->position] == ']') {
+                        add_token(lexer, TOKEN_RBRACKET, "]", 1);
+                        lexer->position++;
+                        lexer->column++;
+                    }
+                }
             }
             break;
         }
@@ -1333,7 +1068,6 @@ void tokenize(Lexer* lexer) {
             }
             break;
 
-
         case 'd':
             if (strncmp(lexer->input + lexer->position, "do", 2) == 0) {
                 add_token(lexer, TOKEN_DO, "do", 2);
@@ -1341,7 +1075,7 @@ void tokenize(Lexer* lexer) {
                 lexer->column += 2;
             }
             else if (strncmp(lexer->input + lexer->position, "del", 3) == 0) {
-                add_token(lexer, TOKEN_DEL, "del", 3);
+                add_token(lexer, TO极N_DEL, "del", 3);
                 lexer->position += 3;
                 lexer->column += 3;
             }
@@ -1521,7 +1255,6 @@ void tokenize(Lexer* lexer) {
             }
             break;
 
-
         case '!':
             add_token(lexer, TOKEN_BANG, "!", 1);
             lexer->position++;
@@ -1568,24 +1301,6 @@ void tokenize(Lexer* lexer) {
                     lexer->input[lexer->position] == '[') {
                     parse_return_type(lexer);
                 }
-            }
-            break;
-
-        case '.':
-            if (lexer->position < lexer->length - 2 &&
-                lexer->input[lexer->position + 1] == '.' &&
-                lexer->input[lexer->position + 2] == '.') {
-                add_token(lexer, TOKEN_ELLIPSIS, "...", 3);
-                lexer->position += 3;
-                lexer->column += 3;
-            }
-            else if (isdigit(next)) {
-                parse_number(lexer);
-            }
-            else {
-                add_error(lexer, "Unexpected dot");
-                lexer->position++;
-                lexer->column++;
             }
             break;
 
@@ -1848,13 +1563,77 @@ int main(int argc, char* argv[]) {
     Lexer* lexer = init_lexer(buffer_file);
     tokenize(lexer);
 
-    printf("Line  Col  Type               Value\n");
-    printf("-----------------------------------\n");
+    // Группировка токенов по строкам
+    int max_line = 0;
     for (int i = 0; i < lexer->token_count; i++) {
-        Token token = lexer->tokens[i];
-        printf("[ %-16s %s ]\n", token_names[token.type], token.value);
+        if (lexer->tokens[i].line > max_line) {
+            max_line = lexer->tokens[i].line;
+        }
     }
 
+    // Создаем массив списков токенов для каждой строки
+    Token*** lines = calloc(max_line + 1, sizeof(Token**));
+    int* token_counts = calloc(max_line + 1, sizeof(int));
+    int* capacities = calloc(max_line + 1, sizeof(int));
+
+    for (int i = 0; i < lexer->token_count; i++) {
+        Token* token = &lexer->tokens[i];
+        if (token->type == TOKEN_EOF) continue;
+        
+        int line = token->line;
+        if (line >= 0 && line <= max_line) {
+            if (token_counts[line] >= capacities[line]) {
+                capacities[line] = capacities[line] ? capacities[line] * 2 : 10;
+                lines[line] = realloc(lines[line], capacities[line] * sizeof(Token*));
+            }
+            lines[line][token_counts[line]++] = token;
+        }
+    }
+
+    // Вывод токенов с группировкой по строкам
+    printf("Tokens by line:\n");
+    printf("================\n");
+    for (int line = 1; line <= max_line; line++) {
+        if (token_counts[line] == 0) continue;
+        
+        printf("Line %d: [", line);
+        for (int i = 0; i < token_counts[line]; i++) {
+            Token* token = lines[line][i];
+            
+            // Токены с динамическим значением
+            if (token->type == TOKEN_ID ||
+                token->type == TOKEN_INT ||
+                token->type == TOKEN_REAL ||
+                token->type == TOKEN_STRING ||
+                token->type == TOKEN_CHAR ||
+                token->type == TOKEN_TYPE ||
+                token->type == TOKEN_MODIFIER ||
+                token->type == TOKEN_VAR_SIZE ||
+                token->type == TOKEN_ERROR ||
+                token->type == TOKEN_PREPROC_MACRO ||
+                token->type == TOKEN_OUTSIDE_COMPILE ||
+                token->type == TOKEN_OUTSIDE_CODE) {
+                printf("%s:%s", token_names[token->type], token->value);
+            }
+            // Токены без значения (статический текст)
+            else {
+                printf("%s", token_names[token->type]);
+            }
+            
+            if (i < token_counts[line] - 1) {
+                printf(" ");
+            }
+        }
+        printf("]\n");
+    }
+
+    // Освобождение ресурсов
+    for (int i = 0; i <= max_line; i++) {
+        free(lines[i]);
+    }
+    free(lines);
+    free(token_counts);
+    free(capacities);
     free_lexer(lexer);
     free(buffer_file);
     return 0;
